@@ -1,10 +1,10 @@
 === Easy IndexNow ===
-Contributors: yourname
+Contributors: supunmanoj
 Tags: indexnow, seo, bing, indexing, search engines
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 
 Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines when your content changes.
@@ -15,6 +15,8 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 * Batches changes and sends them in the background so saving stays fast.
 * Manual URL submission and one-click whole-site submission.
 * Log of the last 50 submissions with readable result messages.
+* Detects all public content types, including ones from other plugins, and flags new ones.
+* "Check key file" button that diagnoses Cloudflare, firewall and cache problems.
 * Works alongside free Yoast SEO.
 
 == Installation ==
@@ -22,3 +24,12 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 2. Activate the plugin.
 3. Go to Settings → IndexNow and open the key file link to confirm it shows your key.
 4. Click "Submit all published content" once.
+
+== Changelog ==
+= 1.1.0 =
+* Writes a real key file to the site root when possible (more reliable behind CDNs and caches).
+* New "Check key file" diagnostic with Cloudflare detection.
+* Lists every public content type, marks new ones, and can auto-enable future types.
+
+= 1.0.0 =
+* Initial release.
