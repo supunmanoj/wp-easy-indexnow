@@ -3,7 +3,7 @@
  * Plugin Name:       Easy IndexNow
  * Plugin URI:        https://github.com/supunmanoj/wp-easy-indexnow
  * Description:       Automatically notifies search engines (Bing, Yandex, Seznam, Naver and others) through the IndexNow protocol when content is published, updated or removed.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Supun Manoj Kumara
@@ -25,6 +25,11 @@ final class Easy_IndexNow {
 	const CRON_HOOK = 'easy_indexnow_send_queue';
 	const LOG_LIMIT = 50;
 	const MAX_URLS  = 10000; // IndexNow limit per request.
+	const RETRY     = 'easy_indexnow_retry';
+	const RETRY_HOOK = 'easy_indexnow_send_retry';
+
+	/** Minutes to wait before each automatic retry of a failed submission. */
+	const RETRY_DELAYS = array( 10, 30, 120 );
 
 	/** @var Easy_IndexNow|null */
 	private static $instance = null;
@@ -50,6 +55,7 @@ final class Easy_IndexNow {
 
 		// Background sending.
 		add_action( self::CRON_HOOK, array( $this, 'process_queue' ) );
+		add_action( self::RETRY_HOOK, array( $this, 'process_retry' ) );
 
 		// Admin.
 		add_action( 'admin_menu', array( $this, 'admin_menu' ) );
@@ -69,8 +75,9 @@ final class Easy_IndexNow {
 
 	public static function defaults() {
 		return array(
-			'key'        => '',
-			'endpoint'   => 'https://api.indexnow.org/indexnow',
+			'key'            => '',
+			'key_created'    => 0, // When the key was generated (new keys need verifying).
+			'endpoint'       => 'https://api.indexnow.org/indexnow',
 			'post_types'     => array( 'post', 'page' ),
 			'auto'           => 1,
 			'auto_new_types' => 0,       // Automatically enable newly found content types.
@@ -115,7 +122,8 @@ final class Easy_IndexNow {
 	public static function get_settings() {
 		$settings = wp_parse_args( (array) get_option( self::OPTION, array() ), self::defaults() );
 		if ( ! self::is_valid_key( $settings['key'] ) ) {
-			$settings['key'] = self::generate_key();
+			$settings['key']         = self::generate_key();
+			$settings['key_created'] = time();
 			update_option( self::OPTION, $settings );
 		}
 		return $settings;
@@ -208,6 +216,13 @@ final class Easy_IndexNow {
 
 	public static function deactivate() {
 		wp_clear_scheduled_hook( self::CRON_HOOK );
+		wp_clear_scheduled_hook( self::RETRY_HOOK );
+	}
+
+	/** True while a freshly generated key may still be awaiting verification. */
+	public static function key_is_new() {
+		$settings = self::get_settings();
+		return ! empty( $settings['key_created'] ) && ( time() - (int) $settings['key_created'] ) < HOUR_IN_SECONDS;
 	}
 
 	/* ------------------------------------------------------------------
@@ -334,10 +349,11 @@ final class Easy_IndexNow {
 
 	/**
 	 * @param string[] $urls
-	 * @param string   $source auto|manual|bulk
+	 * @param string   $source  auto|manual|bulk|retry
+	 * @param int      $attempt How many times these URLs were already retried.
 	 * @return array { code: int, message: string }
 	 */
-	public function submit( array $urls, $source = 'manual' ) {
+	public function submit( array $urls, $source = 'manual', $attempt = 0 ) {
 		$settings = self::get_settings();
 		$host     = wp_parse_url( home_url(), PHP_URL_HOST );
 
@@ -376,17 +392,62 @@ final class Easy_IndexNow {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			$code   = 0;
 			$result = array( 'code' => 0, 'message' => $response->get_error_message() );
 		} else {
 			$code   = (int) wp_remote_retrieve_response_code( $response );
 			$result = array( 'code' => $code, 'message' => self::describe_code( $code ) );
+
+			// Keep the search engine's own explanation for failed requests.
+			$detail = trim( wp_strip_all_tags( (string) wp_remote_retrieve_body( $response ) ) );
+			if ( $code >= 400 && '' !== $detail ) {
+				$result['detail'] = substr( $detail, 0, 300 );
+			}
+		}
+
+		// Temporary problems (key still being verified, rate limit, server or
+		// network errors) are retried automatically with growing delays.
+		$retryable = in_array( $code, array( 0, 403, 429, 500, 502, 503, 504 ), true );
+		if ( $retryable && $attempt < count( self::RETRY_DELAYS ) ) {
+			$minutes = self::RETRY_DELAYS[ $attempt ];
+			$this->schedule_retry( $urls, $attempt + 1, $minutes );
+			/* translators: %d: minutes */
+			$result['message'] .= ' ' . sprintf( _n( 'Will retry automatically in %d minute.', 'Will retry automatically in %d minutes.', $minutes, 'easy-indexnow' ), $minutes );
+		} elseif ( $retryable ) {
+			$result['message'] .= ' ' . __( 'Automatic retries are used up; please check the key file and submit again.', 'easy-indexnow' );
 		}
 
 		$this->log( $urls, $result, $source );
 		return $result;
 	}
 
+	private function schedule_retry( array $urls, $attempt, $minutes ) {
+		$pending = (array) get_option( self::RETRY, array() );
+		$merged  = array_values( array_unique( array_merge( isset( $pending['urls'] ) ? (array) $pending['urls'] : array(), $urls ) ) );
+		update_option(
+			self::RETRY,
+			array(
+				'urls'    => array_slice( $merged, 0, self::MAX_URLS ),
+				'attempt' => $attempt,
+			),
+			false
+		);
+		wp_clear_scheduled_hook( self::RETRY_HOOK );
+		wp_schedule_single_event( time() + $minutes * MINUTE_IN_SECONDS, self::RETRY_HOOK );
+	}
+
+	public function process_retry() {
+		$pending = (array) get_option( self::RETRY, array() );
+		delete_option( self::RETRY );
+		if ( ! empty( $pending['urls'] ) ) {
+			$this->submit( (array) $pending['urls'], 'retry', isset( $pending['attempt'] ) ? (int) $pending['attempt'] : 1 );
+		}
+	}
+
 	public static function describe_code( $code ) {
+		if ( 403 === $code && self::key_is_new() ) {
+			return __( 'Forbidden: this key is new and search engines have not verified it yet. This is normal for up to an hour after generating a key.', 'easy-indexnow' );
+		}
 		$messages = array(
 			200 => __( 'OK: URLs submitted successfully.', 'easy-indexnow' ),
 			202 => __( 'Accepted: URLs received, key validation pending.', 'easy-indexnow' ),
@@ -408,6 +469,7 @@ final class Easy_IndexNow {
 				'source'  => $source,
 				'code'    => $result['code'],
 				'message' => $result['message'],
+				'detail'  => isset( $result['detail'] ) ? $result['detail'] : '',
 				'count'   => count( $urls ),
 				'sample'  => array_slice( $urls, 0, 5 ),
 			)
@@ -449,6 +511,7 @@ final class Easy_IndexNow {
 			// The settings form never sends a key, so it keeps the current one;
 			// internal saves (activation, "Generate new key") pass a fresh valid key.
 			'key'            => ( isset( $input['key'] ) && self::is_valid_key( $input['key'] ) ) ? $input['key'] : $current['key'],
+			'key_created'    => isset( $input['key_created'] ) ? absint( $input['key_created'] ) : absint( $current['key_created'] ),
 			'endpoint'       => array_key_exists( $endpoint, self::endpoints() ) ? $endpoint : self::defaults()['endpoint'],
 			'post_types'     => array_values( array_filter( $types, 'is_post_type_viewable' ) ),
 			'auto'           => empty( $input['auto'] ) ? 0 : 1,
@@ -504,10 +567,11 @@ final class Easy_IndexNow {
 		$this->check_request( 'easy_indexnow_regen' );
 		$settings = self::get_settings();
 		self::delete_key_file( $settings['key'] );
-		$settings['key'] = self::generate_key();
+		$settings['key']         = self::generate_key();
+		$settings['key_created'] = time();
 		update_option( self::OPTION, $settings );
 		self::write_key_file( $settings['key'] );
-		$this->redirect_back( __( 'A new key was generated.', 'easy-indexnow' ) );
+		$this->redirect_back( __( 'A new key was generated. Search engines need to verify it, so submissions may return 403 for a while; the plugin retries automatically.', 'easy-indexnow' ) );
 	}
 
 	/**
@@ -586,6 +650,11 @@ final class Easy_IndexNow {
 		if ( self::is_local_site() ) {
 			echo '<div class="notice notice-warning"><p>' . esc_html__( 'This looks like a local site, so automatic submissions are paused. Search engines cannot reach local sites.', 'easy-indexnow' ) . '</p></div>';
 		}
+		if ( wp_next_scheduled( self::RETRY_HOOK ) ) {
+			$pending = (array) get_option( self::RETRY, array() );
+			/* translators: 1: number of URLs, 2: human time difference */
+			echo '<div class="notice notice-info"><p>' . esc_html( sprintf( __( '%1$d URLs are waiting to be retried automatically in %2$s.', 'easy-indexnow' ), isset( $pending['urls'] ) ? count( (array) $pending['urls'] ) : 0, human_time_diff( time(), wp_next_scheduled( self::RETRY_HOOK ) ) ) ) . '</p></div>';
+		}
 	}
 
 	private function action_form( $action, $label, $class = 'button', $confirm = '' ) {
@@ -631,7 +700,7 @@ final class Easy_IndexNow {
 			</p>
 			<?php
 			$this->action_form( 'easy_indexnow_check', __( 'Check key file', 'easy-indexnow' ), 'primary' );
-			$this->action_form( 'easy_indexnow_regen', __( 'Generate new key', 'easy-indexnow' ), 'secondary', __( 'Replace the current key?', 'easy-indexnow' ) );
+			$this->action_form( 'easy_indexnow_regen', __( 'Generate new key', 'easy-indexnow' ), 'secondary', __( 'Only generate a new key if your current one was exposed. Search engines must verify every new key, which causes temporary 403 errors. Continue?', 'easy-indexnow' ) );
 			?>
 
 			<hr>
@@ -708,9 +777,14 @@ final class Easy_IndexNow {
 					<tbody>
 					<?php foreach ( $log as $entry ) : ?>
 						<tr>
-							<td><?php echo esc_html( wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $entry['time'] ) ); ?></td>
+							<td><?php echo esc_html( wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $entry['time'] ) ); ?><br><small><?php echo esc_html( wp_timezone_string() ); ?></small></td>
 							<td><?php echo esc_html( ucfirst( $entry['source'] ) ); ?></td>
-							<td><?php echo esc_html( ( $entry['code'] ? $entry['code'] . ' – ' : '' ) . $entry['message'] ); ?></td>
+							<td>
+								<?php echo esc_html( ( $entry['code'] ? $entry['code'] . ' – ' : '' ) . $entry['message'] ); ?>
+								<?php if ( ! empty( $entry['detail'] ) ) : ?>
+									<br><small><?php esc_html_e( 'Search engine said:', 'easy-indexnow' ); ?> <code><?php echo esc_html( $entry['detail'] ); ?></code></small>
+								<?php endif; ?>
+							</td>
 							<td>
 								<?php
 								foreach ( $entry['sample'] as $url ) {

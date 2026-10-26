@@ -4,7 +4,7 @@ Tags: indexnow, seo, bing, indexing, search engines
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 
 Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines when your content changes.
@@ -26,6 +26,11 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 4. Click "Submit all published content" once.
 
 == Changelog ==
+= 1.2.0 =
+* Failed submissions (403 while a key is verified, 429, server errors) are retried automatically after 10, 30 and 120 minutes.
+* The log shows the search engine's own error text and the site time zone.
+* Clearer messages for new keys and a warning before generating a new key.
+
 = 1.1.0 =
 * Writes a real key file to the site root when possible (more reliable behind CDNs and caches).
 * New "Check key file" diagnostic with Cloudflare detection.

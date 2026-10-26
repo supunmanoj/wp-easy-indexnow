@@ -19,5 +19,7 @@ if ( is_array( $easy_indexnow_settings ) && ! empty( $easy_indexnow_settings['ke
 delete_option( 'easy_indexnow_settings' );
 delete_option( 'easy_indexnow_log' );
 delete_option( 'easy_indexnow_queue' );
+delete_option( 'easy_indexnow_retry' );
 delete_transient( 'easy_indexnow_types_added' );
 wp_clear_scheduled_hook( 'easy_indexnow_send_queue' );
+wp_clear_scheduled_hook( 'easy_indexnow_send_retry' );
