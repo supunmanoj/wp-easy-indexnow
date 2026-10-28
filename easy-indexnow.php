@@ -3,7 +3,7 @@
  * Plugin Name:       Easy IndexNow
  * Plugin URI:        https://github.com/supunmanoj/wp-easy-indexnow
  * Description:       Automatically notifies search engines (Bing, Yandex, Seznam, Naver and others) through the IndexNow protocol when content is published, updated or removed.
- * Version:           1.3.0
+ * Version:           1.4.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Supun Manoj Kumara
@@ -11,6 +11,7 @@
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       easy-indexnow
+ * Update URI:        https://github.com/supunmanoj/wp-easy-indexnow
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -19,6 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Easy_IndexNow {
 
+	const VERSION   = '1.4.0'; // Keep in sync with "Version:" above.
 	const OPTION    = 'easy_indexnow_settings';
 	const LOG       = 'easy_indexnow_log';
 	const QUEUE     = 'easy_indexnow_queue';
@@ -715,6 +717,15 @@ final class Easy_IndexNow {
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Easy IndexNow', 'easy-indexnow' ); ?></h1>
+			<p class="description">
+				<?php
+				/* translators: %s: plugin version */
+				echo esc_html( sprintf( __( 'Version %s. Updates are delivered from GitHub through Dashboard → Updates.', 'easy-indexnow' ), self::VERSION ) );
+				if ( current_user_can( 'update_plugins' ) && class_exists( 'Easy_IndexNow_Updater' ) ) {
+					echo ' <a href="' . esc_url( Easy_IndexNow_Updater::check_update_url() ) . '">' . esc_html__( 'Check for updates', 'easy-indexnow' ) . '</a>';
+				}
+				?>
+			</p>
 
 			<h2><?php esc_html_e( 'Your IndexNow key', 'easy-indexnow' ); ?></h2>
 			<p><code><?php echo esc_html( $settings['key'] ); ?></code></p>
@@ -858,3 +869,6 @@ final class Easy_IndexNow {
 register_activation_hook( __FILE__, array( 'Easy_IndexNow', 'activate' ) );
 register_deactivation_hook( __FILE__, array( 'Easy_IndexNow', 'deactivate' ) );
 Easy_IndexNow::instance();
+
+require_once __DIR__ . '/class-easy-indexnow-updater.php';
+new Easy_IndexNow_Updater( __FILE__, Easy_IndexNow::VERSION );

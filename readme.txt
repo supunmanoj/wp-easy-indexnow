@@ -4,7 +4,7 @@ Tags: indexnow, seo, bing, indexing, search engines
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 
 Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines when your content changes.
@@ -19,6 +19,11 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 * "Check key file" button that diagnoses Cloudflare, firewall and cache problems.
 * Works alongside free Yoast SEO.
 
+== Updates ==
+Install 1.4.0 or later once. After that, new versions appear under Dashboard → Updates whenever a new release is published on GitHub. You can also click "Enable auto-updates" on the Plugins screen.
+
+For developers: bump "Version:" and Easy_IndexNow::VERSION, commit, then publish a GitHub release tagged with the version (for example v1.4.1).
+
 == Installation ==
 1. Upload the `easy-indexnow` folder to `/wp-content/plugins/` (or upload the zip via Plugins → Add New → Upload).
 2. Activate the plugin.
@@ -26,6 +31,10 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 4. Click "Submit all published content" once.
 
 == Changelog ==
+= 1.4.0 =
+* Automatic updates from GitHub releases: sites get the normal WordPress update notice and can enable auto-updates.
+* "Check for updates" link on the Plugins screen and settings page.
+
 = 1.3.0 =
 * A 202 "key validation pending" response is now followed up automatically: the plugin resubmits after 10 minutes (then 30 and 120 if needed) until the key is confirmed.
 * Shows the key status (verified, pending or not confirmed yet) on the settings page.

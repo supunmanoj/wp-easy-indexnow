@@ -21,5 +21,6 @@ delete_option( 'easy_indexnow_log' );
 delete_option( 'easy_indexnow_queue' );
 delete_option( 'easy_indexnow_retry' );
 delete_transient( 'easy_indexnow_types_added' );
+delete_site_transient( 'easy_indexnow_update_info' );
 wp_clear_scheduled_hook( 'easy_indexnow_send_queue' );
 wp_clear_scheduled_hook( 'easy_indexnow_send_retry' );
