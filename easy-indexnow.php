@@ -3,7 +3,7 @@
  * Plugin Name:       Easy IndexNow
  * Plugin URI:        https://github.com/supunmanoj/wp-easy-indexnow
  * Description:       Automatically notifies search engines (Bing, Yandex, Seznam, Naver and others) through the IndexNow protocol when content is published, updated or removed.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Supun Manoj Kumara
@@ -77,6 +77,8 @@ final class Easy_IndexNow {
 		return array(
 			'key'            => '',
 			'key_created'    => 0, // When the key was generated (new keys need verifying).
+			'key_verified'   => '', // The key a search engine last confirmed with HTTP 200.
+			'key_verified_at' => 0,
 			'endpoint'       => 'https://api.indexnow.org/indexnow',
 			'post_types'     => array( 'post', 'page' ),
 			'auto'           => 1,
@@ -217,6 +219,21 @@ final class Easy_IndexNow {
 	public static function deactivate() {
 		wp_clear_scheduled_hook( self::CRON_HOOK );
 		wp_clear_scheduled_hook( self::RETRY_HOOK );
+	}
+
+	/** True once a search engine has accepted the current key with HTTP 200. */
+	public static function key_is_verified() {
+		$settings = self::get_settings();
+		return '' !== $settings['key_verified'] && $settings['key_verified'] === $settings['key'];
+	}
+
+	private static function mark_key_verified() {
+		$settings = self::get_settings();
+		if ( $settings['key_verified'] !== $settings['key'] ) {
+			$settings['key_verified']    = $settings['key'];
+			$settings['key_verified_at'] = time();
+			update_option( self::OPTION, $settings );
+		}
 	}
 
 	/** True while a freshly generated key may still be awaiting verification. */
@@ -405,16 +422,33 @@ final class Easy_IndexNow {
 			}
 		}
 
+		if ( 200 === $code ) {
+			self::mark_key_verified();
+		}
+
+		// 202 = URLs received but the key is still being validated. Until a
+		// search engine has confirmed this key, resubmit later to make sure
+		// the URLs are processed once validation finishes.
+		$pending = ( 202 === $code ) && ! self::key_is_verified();
+
 		// Temporary problems (key still being verified, rate limit, server or
 		// network errors) are retried automatically with growing delays.
-		$retryable = in_array( $code, array( 0, 403, 429, 500, 502, 503, 504 ), true );
+		$retryable = $pending || in_array( $code, array( 0, 403, 429, 500, 502, 503, 504 ), true );
 		if ( $retryable && $attempt < count( self::RETRY_DELAYS ) ) {
 			$minutes = self::RETRY_DELAYS[ $attempt ];
 			$this->schedule_retry( $urls, $attempt + 1, $minutes );
-			/* translators: %d: minutes */
-			$result['message'] .= ' ' . sprintf( _n( 'Will retry automatically in %d minute.', 'Will retry automatically in %d minutes.', $minutes, 'easy-indexnow' ), $minutes );
+			$result['message'] .= ' ' . ( $pending
+				/* translators: %d: minutes */
+				? sprintf( _n( 'The plugin will resubmit automatically in %d minute to confirm the key. No action needed.', 'The plugin will resubmit automatically in %d minutes to confirm the key. No action needed.', $minutes, 'easy-indexnow' ), $minutes )
+				/* translators: %d: minutes */
+				: sprintf( _n( 'Will retry automatically in %d minute.', 'Will retry automatically in %d minutes.', $minutes, 'easy-indexnow' ), $minutes ) );
+		} elseif ( $pending ) {
+			$result['message'] .= ' ' . __( 'Your URLs were received; the key is still being validated. No action needed unless this continues for more than a day.', 'easy-indexnow' );
 		} elseif ( $retryable ) {
 			$result['message'] .= ' ' . __( 'Automatic retries are used up; please check the key file and submit again.', 'easy-indexnow' );
+		}
+		if ( 200 === $code && 'retry' === $source ) {
+			$result['message'] .= ' ' . __( 'Key confirmed by the search engine.', 'easy-indexnow' );
 		}
 
 		$this->log( $urls, $result, $source );
@@ -512,6 +546,8 @@ final class Easy_IndexNow {
 			// internal saves (activation, "Generate new key") pass a fresh valid key.
 			'key'            => ( isset( $input['key'] ) && self::is_valid_key( $input['key'] ) ) ? $input['key'] : $current['key'],
 			'key_created'    => isset( $input['key_created'] ) ? absint( $input['key_created'] ) : absint( $current['key_created'] ),
+			'key_verified'   => isset( $input['key_verified'] ) && ( '' === $input['key_verified'] || self::is_valid_key( $input['key_verified'] ) ) ? $input['key_verified'] : $current['key_verified'],
+			'key_verified_at' => isset( $input['key_verified_at'] ) ? absint( $input['key_verified_at'] ) : absint( $current['key_verified_at'] ),
 			'endpoint'       => array_key_exists( $endpoint, self::endpoints() ) ? $endpoint : self::defaults()['endpoint'],
 			'post_types'     => array_values( array_filter( $types, 'is_post_type_viewable' ) ),
 			'auto'           => empty( $input['auto'] ) ? 0 : 1,
@@ -653,7 +689,7 @@ final class Easy_IndexNow {
 		if ( wp_next_scheduled( self::RETRY_HOOK ) ) {
 			$pending = (array) get_option( self::RETRY, array() );
 			/* translators: 1: number of URLs, 2: human time difference */
-			echo '<div class="notice notice-info"><p>' . esc_html( sprintf( __( '%1$d URLs are waiting to be retried automatically in %2$s.', 'easy-indexnow' ), isset( $pending['urls'] ) ? count( (array) $pending['urls'] ) : 0, human_time_diff( time(), wp_next_scheduled( self::RETRY_HOOK ) ) ) ) . '</p></div>';
+			echo '<div class="notice notice-info"><p>' . esc_html( sprintf( __( '%1$d URLs will be resubmitted automatically in %2$s.', 'easy-indexnow' ), isset( $pending['urls'] ) ? count( (array) $pending['urls'] ) : 0, human_time_diff( time(), wp_next_scheduled( self::RETRY_HOOK ) ) ) ) . '</p></div>';
 		}
 	}
 
@@ -686,6 +722,19 @@ final class Easy_IndexNow {
 				<?php esc_html_e( 'Key file:', 'easy-indexnow' ); ?>
 				<a href="<?php echo esc_url( $key_url ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $key_url ); ?></a>
 				<br><span class="description"><?php esc_html_e( 'Open this link: it should show only your key. If it shows a 404, re-save Settings → Permalinks or check your caching plugin.', 'easy-indexnow' ); ?></span>
+			</p>
+			<p>
+				<strong><?php esc_html_e( 'Key status:', 'easy-indexnow' ); ?></strong>
+				<?php
+				if ( self::key_is_verified() ) {
+					/* translators: %s: date and time */
+					echo '<span style="color:#008a20">&#10003; ' . esc_html( sprintf( __( 'Verified by search engines on %s', 'easy-indexnow' ), wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $settings['key_verified_at'] ) ) ) . '</span>';
+				} elseif ( wp_next_scheduled( self::RETRY_HOOK ) ) {
+					echo '<span style="color:#996800">' . esc_html__( 'Validation pending: the plugin will resubmit automatically to confirm it.', 'easy-indexnow' ) . '</span>';
+				} else {
+					esc_html_e( 'Not confirmed yet. It will be confirmed with the next successful submission.', 'easy-indexnow' );
+				}
+				?>
 			</p>
 			<p class="description">
 				<?php

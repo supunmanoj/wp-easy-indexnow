@@ -4,7 +4,7 @@ Tags: indexnow, seo, bing, indexing, search engines
 Requires at least: 6.0
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 
 Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines when your content changes.
@@ -26,6 +26,10 @@ Instantly notify Bing, Yandex, Seznam, Naver and other IndexNow search engines w
 4. Click "Submit all published content" once.
 
 == Changelog ==
+= 1.3.0 =
+* A 202 "key validation pending" response is now followed up automatically: the plugin resubmits after 10 minutes (then 30 and 120 if needed) until the key is confirmed.
+* Shows the key status (verified, pending or not confirmed yet) on the settings page.
+
 = 1.2.0 =
 * Failed submissions (403 while a key is verified, 429, server errors) are retried automatically after 10, 30 and 120 minutes.
 * The log shows the search engine's own error text and the site time zone.
